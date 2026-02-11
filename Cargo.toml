@@ -1,0 +1,11 @@
+[package]
+name = "multiplayer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+colored = "2"
+thiserror = "2"
+base64 = "0.22"
+rand = "0.8"
