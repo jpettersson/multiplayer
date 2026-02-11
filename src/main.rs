@@ -196,8 +196,9 @@ fn install_authorized_key(session: &str) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
+    let tmux_path = resolve_tmux_path()?;
     let entry = format!(
-        "command=\"tmux -u attach -t {session}\",no-port-forwarding,no-X11-forwarding,no-agent-forwarding {key_type} {key_data} multiplayer:{session}\n"
+        "command=\"{tmux_path} -u attach -t {session}\",no-port-forwarding,no-X11-forwarding,no-agent-forwarding {key_type} {key_data} multiplayer:{session}\n"
     );
 
     // Append to authorized_keys
@@ -230,6 +231,26 @@ fn remove_authorized_key(session: &str) -> Result<()> {
 fn cleanup_ssh_keys(session: &str) {
     let _ = fs::remove_file(tmp_key_path(session));
     let _ = fs::remove_file(tmp_pub_key_path(session));
+}
+
+// ---------------------------------------------------------------------------
+// tmux path resolution
+// ---------------------------------------------------------------------------
+
+/// Resolve the absolute path to tmux so that the authorized_keys forced
+/// command works in non-interactive SSH sessions (where PATH may be minimal).
+fn resolve_tmux_path() -> Result<String> {
+    let output = Command::new("which")
+        .arg("tmux")
+        .output()?;
+    if !output.status.success() {
+        return Err(err("Could not find tmux. Install it and try again."));
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err(err("Could not determine tmux path"));
+    }
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
