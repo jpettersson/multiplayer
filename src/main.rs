@@ -533,6 +533,7 @@ fn join_with_key(session: &str, host: &str, ssh_port: u16, private_key: &str) ->
     let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
 
     let status = Command::new("ssh")
+        .env("TERM", "xterm-256color")
         .args([
             "-i",
             key_path.to_str().unwrap(),
