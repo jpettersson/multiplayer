@@ -317,15 +317,16 @@ fn tmux_session_alive(session: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 struct Token {
+    user: String,
     host: String,
     port: u16,
     session: String,
     private_key: String,
 }
 
-fn encode_token(host: &str, ssh_port: u16, session: &str, private_key: &str) -> String {
+fn encode_token(user: &str, host: &str, ssh_port: u16, session: &str, private_key: &str) -> String {
     let encoded_key = URL_SAFE_NO_PAD.encode(private_key.as_bytes());
-    format!("mp://{host}:{ssh_port}/{session}#{encoded_key}")
+    format!("mp://{user}@{host}:{ssh_port}/{session}#{encoded_key}")
 }
 
 fn decode_token(token: &str) -> Result<Token> {
@@ -339,13 +340,17 @@ fn decode_token(token: &str) -> Result<Token> {
         .split_once('/')
         .ok_or_else(|| err("Invalid token: missing / separator"))?;
 
-    let (host, port_str) = addr
-        .split_once(':')
+    let (user_host, port_str) = addr
+        .rsplit_once(':')
         .ok_or_else(|| err("Invalid token: missing :port"))?;
 
     let port: u16 = port_str
         .parse()
         .map_err(|_| err("Invalid token: bad port number"))?;
+
+    let (user, host) = user_host
+        .split_once('@')
+        .ok_or_else(|| err("Invalid token: missing user@host"))?;
 
     let key_bytes = URL_SAFE_NO_PAD
         .decode(encoded_key)
@@ -355,6 +360,7 @@ fn decode_token(token: &str) -> Result<Token> {
         String::from_utf8(key_bytes).map_err(|_| err("Invalid token: key is not valid UTF-8"))?;
 
     Ok(Token {
+        user: user.to_string(),
         host: host.to_string(),
         port,
         session: session.to_string(),
@@ -482,7 +488,8 @@ fn cmd_start(name: Option<String>) -> Result<()> {
     let private_key = fs::read_to_string(tmp_key_path(&session))?;
 
     // 5. Build token
-    let token = encode_token(&host_ip, 22, &session, &private_key);
+    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+    let token = encode_token(&user, &host_ip, 22, &session, &private_key);
 
     // 6. Save session info
     write_session_info(&session, &host_ip);
@@ -516,20 +523,18 @@ fn cmd_join(target: Option<String>) -> Result<()> {
                 ));
             }
             let token = decode_token(&t)?;
-            join_with_key(&token.session, &token.host, token.port, &token.private_key)
+            join_with_key(&token.user, &token.session, &token.host, token.port, &token.private_key)
         }
     }
 }
 
-fn join_with_key(session: &str, host: &str, ssh_port: u16, private_key: &str) -> Result<()> {
+fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_key: &str) -> Result<()> {
     // Write private key to temp file
     let key_path = PathBuf::from(format!("/tmp/multiplayer-join-{session}-key"));
     fs::write(&key_path, private_key)?;
     fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
 
     println!("  {}...", "Connecting".bold());
-
-    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
 
     let status = Command::new("ssh")
         .env("TERM", "xterm-256color")
