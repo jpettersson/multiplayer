@@ -134,17 +134,6 @@ cargo run -- status
 cargo run -- stop test-session
 ```
 
-### What to verify
-
-- `start` prints session name and token, then returns to the shell
-- `join` (no args) attaches you to the local tmux session
-- `join` with the token connects you to the same tmux session (you see the same terminal)
-- Both terminals show keystrokes from either participant
-- `status` shows participant count and host IP
-- `stop` kills the tmux session and cleans up
-- After stop, check that `~/.ssh/authorized_keys` no longer contains a `multiplayer:test-session` entry
-- Check that `/tmp/multiplayer-test-session-*` files are all removed
-
 ## How it works
 
 1. `start` generates a temporary ed25519 SSH keypair
