@@ -1,5 +1,4 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use clap::{Parser, Subcommand};
 use colored::Colorize;
 use rand::Rng;
 use std::fs;
@@ -8,59 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
-
-#[derive(Parser)]
-#[command(name = "multiplayer", about = "Instant shared terminal sessions on LAN")]
-struct Cli {
-    #[command(subcommand)]
-    command: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Start a new multiplayer session
-    Start {
-        /// Session name (default: random adjective-animal)
-        #[arg(long)]
-        name: Option<String>,
-    },
-    /// Join a session (local attach if no token, remote SSH if token given)
-    Join {
-        /// mp:// token (omit to attach to local session)
-        target: Option<String>,
-    },
-    /// Stop the current session and clean up
-    Stop {
-        /// Session name (auto-detected if omitted)
-        name: Option<String>,
-    },
-    /// Show current session info
-    Status {
-        /// Session name (auto-detected if omitted)
-        name: Option<String>,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-#[derive(thiserror::Error, Debug)]
-enum Error {
-    #[error("{0}")]
-    Msg(String),
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-type Result<T> = std::result::Result<T, Error>;
-
-fn err(msg: impl Into<String>) -> Error {
-    Error::Msg(msg.into())
-}
+use crate::{Result, err};
 
 // ---------------------------------------------------------------------------
 // Session name generator (adjective-animal)
@@ -80,14 +27,14 @@ const ANIMALS: &[&str] = &[
     "trout", "robin", "squid", "lemur", "newt", "stork",
 ];
 
-fn generate_session_name() -> String {
+pub(crate) fn generate_session_name() -> String {
     let mut rng = rand::thread_rng();
     let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
     let animal = ANIMALS[rng.gen_range(0..ANIMALS.len())];
     format!("{adj}-{animal}")
 }
 
-fn validate_session_name(name: &str) -> Result<()> {
+pub(crate) fn validate_session_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(err("Session name cannot be empty"));
     }
@@ -101,15 +48,15 @@ fn validate_session_name(name: &str) -> Result<()> {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-fn tmp_key_path(session: &str) -> PathBuf {
+pub(crate) fn tmp_key_path(session: &str) -> PathBuf {
     PathBuf::from(format!("/tmp/multiplayer-{session}-key"))
 }
 
-fn tmp_pub_key_path(session: &str) -> PathBuf {
+pub(crate) fn tmp_pub_key_path(session: &str) -> PathBuf {
     PathBuf::from(format!("/tmp/multiplayer-{session}-key.pub"))
 }
 
-fn tmp_session_info_path(session: &str) -> PathBuf {
+pub(crate) fn tmp_session_info_path(session: &str) -> PathBuf {
     PathBuf::from(format!("/tmp/multiplayer-{session}-info"))
 }
 
@@ -131,7 +78,7 @@ fn check_dependency(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-fn check_dependencies(deps: &[&str]) -> Result<()> {
+pub(crate) fn check_dependencies(deps: &[&str]) -> Result<()> {
     let missing: Vec<&str> = deps.iter().filter(|d| !check_dependency(d)).copied().collect();
     if missing.is_empty() {
         Ok(())
@@ -147,7 +94,7 @@ fn check_dependencies(deps: &[&str]) -> Result<()> {
 // Host IP detection
 // ---------------------------------------------------------------------------
 
-fn get_local_ip() -> Result<String> {
+pub(crate) fn get_local_ip() -> Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| err(format!("Failed to bind UDP socket: {e}")))?;
     socket
         .connect("8.8.8.8:80")
@@ -160,7 +107,7 @@ fn get_local_ip() -> Result<String> {
 // SSH key management
 // ---------------------------------------------------------------------------
 
-fn generate_ssh_keypair(session: &str) -> Result<()> {
+pub(crate) fn generate_ssh_keypair(session: &str) -> Result<()> {
     let key_path = tmp_key_path(session);
     // Remove existing key files if they exist
     let _ = fs::remove_file(&key_path);
@@ -178,7 +125,7 @@ fn generate_ssh_keypair(session: &str) -> Result<()> {
     Ok(())
 }
 
-fn install_authorized_key(session: &str) -> Result<()> {
+pub(crate) fn install_authorized_key(session: &str) -> Result<()> {
     let pub_key = fs::read_to_string(tmp_pub_key_path(session))?;
     let pub_key = pub_key.trim();
 
@@ -228,7 +175,7 @@ fn remove_authorized_key(session: &str) -> Result<()> {
     Ok(())
 }
 
-fn cleanup_ssh_keys(session: &str) {
+pub(crate) fn cleanup_ssh_keys(session: &str) {
     let _ = fs::remove_file(tmp_key_path(session));
     let _ = fs::remove_file(tmp_pub_key_path(session));
 }
@@ -237,8 +184,6 @@ fn cleanup_ssh_keys(session: &str) {
 // tmux path resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve the absolute path to tmux so that the authorized_keys forced
-/// command works in non-interactive SSH sessions (where PATH may be minimal).
 fn resolve_tmux_path() -> Result<String> {
     let output = Command::new("which")
         .arg("tmux")
@@ -257,7 +202,7 @@ fn resolve_tmux_path() -> Result<String> {
 // tmux management
 // ---------------------------------------------------------------------------
 
-fn create_tmux_session(session: &str) -> Result<()> {
+pub(crate) fn create_tmux_session(session: &str) -> Result<()> {
     let status = Command::new("tmux")
         .args(["-u", "new-session", "-d", "-s", session])
         .status()?;
@@ -304,7 +249,7 @@ fn tmux_client_count(session: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn tmux_session_alive(session: &str) -> bool {
+pub(crate) fn tmux_session_alive(session: &str) -> bool {
     Command::new("tmux")
         .args(["has-session", "-t", session])
         .stderr(Stdio::null())
@@ -316,15 +261,15 @@ fn tmux_session_alive(session: &str) -> bool {
 // Token encoding / decoding
 // ---------------------------------------------------------------------------
 
-struct Token {
-    user: String,
-    host: String,
-    port: u16,
-    session: String,
-    private_key: String,
+pub(crate) struct Token {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub session: String,
+    pub private_key: String,
 }
 
-fn encode_token(user: &str, host: &str, ssh_port: u16, session: &str, private_key: &str) -> String {
+pub(crate) fn encode_token(user: &str, host: &str, ssh_port: u16, session: &str, private_key: &str) -> String {
     let encoded_key = URL_SAFE_NO_PAD.encode(private_key.as_bytes());
     format!("mp://{user}@{host}:{ssh_port}/{session}#{encoded_key}")
 }
@@ -369,7 +314,7 @@ fn decode_token(token: &str) -> Result<Token> {
 }
 
 // ---------------------------------------------------------------------------
-// Session info file (for stop/status when name is not provided)
+// Session info file
 // ---------------------------------------------------------------------------
 
 fn write_session_info(session: &str, host_ip: &str) {
@@ -377,8 +322,7 @@ fn write_session_info(session: &str, host_ip: &str) {
     let _ = fs::write(tmp_session_info_path(session), &info);
 }
 
-fn find_active_session() -> Option<String> {
-    // Look for any /tmp/multiplayer-*-info file
+pub(crate) fn find_active_session() -> Option<String> {
     if let Ok(entries) = fs::read_dir("/tmp") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -412,7 +356,7 @@ fn read_session_info(session: &str) -> Option<(String, String)> {
 // Cleanup
 // ---------------------------------------------------------------------------
 
-fn cleanup_session(session: &str) {
+pub(crate) fn cleanup_session(session: &str) {
     let _ = kill_tmux_session(session);
     let _ = remove_authorized_key(session);
     cleanup_ssh_keys(session);
@@ -423,9 +367,6 @@ fn cleanup_session(session: &str) {
 // Stale session cleanup
 // ---------------------------------------------------------------------------
 
-/// Remove any multiplayer authorized_keys entries whose tmux session no longer
-/// exists (e.g. after a crash, kill -9, or power loss). This prevents stale
-/// keys from granting access if a session name is later reused.
 fn cleanup_stale_sessions() {
     let ak_path = authorized_keys_path();
     let content = match fs::read_to_string(&ak_path) {
@@ -451,85 +392,10 @@ fn cleanup_stale_sessions() {
 }
 
 // ---------------------------------------------------------------------------
-// Commands
+// Join helper
 // ---------------------------------------------------------------------------
 
-fn cmd_start(name: Option<String>) -> Result<()> {
-    check_dependencies(&["tmux", "ssh-keygen"])?;
-
-    // Clean up any stale sessions left behind by crashes or kill -9
-    cleanup_stale_sessions();
-
-    let session = match name {
-        Some(n) => {
-            validate_session_name(&n)?;
-            n
-        }
-        None => generate_session_name(),
-    };
-
-    // Check if session is genuinely still active
-    if tmp_session_info_path(&session).exists() {
-        return Err(err(format!("Session '{session}' already exists. Run `multiplayer stop {session}` first.")));
-    }
-
-    let host_ip = get_local_ip()?;
-
-    // 1. Generate SSH keypair
-    generate_ssh_keypair(&session)?;
-
-    // 2. Install public key in authorized_keys
-    install_authorized_key(&session)?;
-
-    // 3. Create tmux session
-    create_tmux_session(&session)?;
-
-    // 4. Read private key for the token
-    let private_key = fs::read_to_string(tmp_key_path(&session))?;
-
-    // 5. Build token
-    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-    let token = encode_token(&user, &host_ip, 22, &session, &private_key);
-
-    // 6. Save session info
-    write_session_info(&session, &host_ip);
-
-    println!();
-    println!("  {}  {}", "Session:".bold(), session.green().bold());
-    println!();
-    println!("  Share the token so others can join:");
-    println!("    {} {}", "multiplayer join".cyan(), token.cyan());
-    println!();
-    println!("  To enter your session:");
-    println!("    {}", "multiplayer join".cyan());
-
-    Ok(())
-}
-
-fn cmd_join(target: Option<String>) -> Result<()> {
-    match target {
-        None => {
-            check_dependencies(&["tmux"])?;
-            let session = find_active_session()
-                .ok_or_else(|| err("No active session found. Start one first: multiplayer start"))?;
-            println!("  {} {}", "Attaching to session:".bold(), session.green().bold());
-            attach_tmux_session(&session)
-        }
-        Some(t) => {
-            check_dependencies(&["ssh"])?;
-            if !t.starts_with("mp://") {
-                return Err(err(
-                    "Expected an mp:// token. Get one from the session host and run: multiplayer join mp://..."
-                ));
-            }
-            let token = decode_token(&t)?;
-            join_with_key(&token.user, &token.session, &token.host, token.port, &token.private_key)
-        }
-    }
-}
-
-fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_key: &str) -> Result<()> {
-    // Write private key to temp file
+pub(crate) fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_key: &str) -> Result<()> {
     let key_path = PathBuf::from(format!("/tmp/multiplayer-join-{session}-key"));
     fs::write(&key_path, private_key)?;
     fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
@@ -563,27 +429,74 @@ fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_k
     Ok(())
 }
 
-fn cmd_stop(name: Option<String>) -> Result<()> {
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+pub fn cmd_start(name: Option<String>) -> Result<()> {
+    check_dependencies(&["tmux", "ssh-keygen"])?;
+
+    cleanup_stale_sessions();
+
     let session = match name {
-        Some(n) => n,
-        None => find_active_session()
-            .ok_or_else(|| err("No active session found. Specify a session name: multiplayer stop <name>"))?,
+        Some(n) => {
+            validate_session_name(&n)?;
+            n
+        }
+        None => generate_session_name(),
     };
 
-    cleanup_session(&session);
+    if tmp_session_info_path(&session).exists() {
+        return Err(err(format!("Session '{session}' already exists. Run `multiplayer stop {session}` first.")));
+    }
+
+    let host_ip = get_local_ip()?;
+
+    generate_ssh_keypair(&session)?;
+    install_authorized_key(&session)?;
+    create_tmux_session(&session)?;
+
+    let private_key = fs::read_to_string(tmp_key_path(&session))?;
+    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+    let token = encode_token(&user, &host_ip, 22, &session, &private_key);
+
+    write_session_info(&session, &host_ip);
 
     println!();
-    println!(
-        "  {} {}",
-        "Stopped session:".bold(),
-        session.yellow()
-    );
-    println!("  Cleaned up tmux session and authorized_keys entry.");
+    println!("  {}  {}", "Session:".bold(), session.green().bold());
+    println!();
+    println!("  Share the token so others can join:");
+    println!("    {} {}", "multiplayer join".cyan(), token.cyan());
+    println!();
+    println!("  To enter your session:");
+    println!("    {}", "multiplayer join".cyan());
 
     Ok(())
 }
 
-fn cmd_status(name: Option<String>) -> Result<()> {
+pub fn cmd_join(target: Option<String>) -> Result<()> {
+    match target {
+        None => {
+            check_dependencies(&["tmux"])?;
+            let session = find_active_session()
+                .ok_or_else(|| err("No active session found. Start one first: multiplayer start"))?;
+            println!("  {} {}", "Attaching to session:".bold(), session.green().bold());
+            attach_tmux_session(&session)
+        }
+        Some(t) => {
+            check_dependencies(&["ssh"])?;
+            if !t.starts_with("mp://") {
+                return Err(err(
+                    "Expected an mp:// token. Get one from the session host and run: multiplayer join mp://..."
+                ));
+            }
+            let token = decode_token(&t)?;
+            join_with_key(&token.user, &token.session, &token.host, token.port, &token.private_key)
+        }
+    }
+}
+
+pub fn cmd_status(name: Option<String>) -> Result<()> {
     let session = match name {
         Some(n) => n,
         None => find_active_session()
@@ -606,24 +519,4 @@ fn cmd_status(name: Option<String>) -> Result<()> {
     println!("  {:<16} {} attached", "Participants:".bold(), clients);
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-fn main() {
-    let cli = Cli::parse();
-
-    let result = match cli.command {
-        Cmd::Start { name } => cmd_start(name),
-        Cmd::Join { target } => cmd_join(target),
-        Cmd::Stop { name } => cmd_stop(name),
-        Cmd::Status { name } => cmd_status(name),
-    };
-
-    if let Err(e) = result {
-        eprintln!("  {} {}", "Error:".red().bold(), e);
-        std::process::exit(1);
-    }
 }
