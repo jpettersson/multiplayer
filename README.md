@@ -1,6 +1,8 @@
 # Multiplayer
 
-Instant shared terminal sessions on LAN. One command to share your tmux session, one command to join from another machine.
+Huddle togheter around Claude code or any other terminal program and build great things together!
+
+Multiplayer enables instant shared terminal sessions on LAN. One command to share your tmux session, one command to join from another machine.
 
 ## Prerequisites
 
@@ -30,21 +32,6 @@ brew install tmux
 ```
 
 Then enable Remote Login (sshd) via System Settings > General > Sharing > Remote Login.
-
-## Build
-
-```bash
-cd projects/multiplayer
-cargo build
-```
-
-For an optimized release build:
-
-```bash
-cargo build --release
-```
-
-The binary is at `target/debug/multiplayer` (or `target/release/multiplayer`).
 
 ## Usage
 
@@ -102,7 +89,24 @@ multiplayer stop my-feature
 
 This cleans up everything: tmux session, temp SSH keys, and the authorized_keys entry.
 
-## Testing on a single machine
+## Local dev
+
+### Build
+
+```bash
+cd projects/multiplayer
+cargo build
+```
+
+For an optimized release build:
+
+```bash
+cargo build --release
+```
+
+The binary is at `target/debug/multiplayer` (or `target/release/multiplayer`).
+
+### Testing on a single machine
 
 You can test the full flow locally without a second machine.
 
