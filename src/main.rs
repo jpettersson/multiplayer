@@ -898,19 +898,47 @@ fn cmd_join_gcp(token_str: &str) -> Result<()> {
         ));
     }
 
-    let result = join_with_key(
-        &token.user,
-        &token.session,
-        "127.0.0.1",
-        local_port,
-        &token.private_key,
-    );
+    // Retry SSH connection — the local forward port may be listening before the
+    // full tunnel chain (participant → relay:2222 → host:22) is ready.
+    let max_attempts = 5;
+    let mut last_err = None;
+    for attempt in 1..=max_attempts {
+        // Check tunnel is still alive before each attempt
+        if let Some(_status) = tunnel.try_wait()? {
+            let _ = tunnel.kill();
+            let _ = tunnel.wait();
+            return Err(err(
+                "Local forward tunnel exited unexpectedly.",
+            ));
+        }
+
+        match join_with_key(
+            &token.user,
+            &token.session,
+            "127.0.0.1",
+            local_port,
+            &token.private_key,
+        ) {
+            Ok(()) => {
+                let _ = tunnel.kill();
+                let _ = tunnel.wait();
+                return Ok(());
+            }
+            Err(e) => {
+                if attempt < max_attempts {
+                    println!("  {} (attempt {}/{})", "Retrying connection...".bold(), attempt, max_attempts);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                last_err = Some(e);
+            }
+        }
+    }
 
     // Kill the local forward tunnel
     let _ = tunnel.kill();
     let _ = tunnel.wait();
 
-    result
+    Err(last_err.unwrap_or_else(|| err("SSH connection failed after retries")))
 }
 
 fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_key: &str) -> Result<()> {
