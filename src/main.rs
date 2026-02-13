@@ -782,7 +782,7 @@ fn cmd_start_gcp(
     create_tmux_session(&session)?;
 
     // 4. Establish reverse tunnel to GCP relay VM
-    let relay_port = 2222;
+    let relay_port = rand::thread_rng().gen_range(2222..=2322);
     println!(
         "  {} to GCP VM '{}'...",
         "Establishing tunnel".bold(),
@@ -899,7 +899,7 @@ fn cmd_join_gcp(token_str: &str) -> Result<()> {
     }
 
     // Retry SSH connection — the local forward port may be listening before the
-    // full tunnel chain (participant → relay:2222 → host:22) is ready.
+    // full tunnel chain (participant → relay → host:22) is ready.
     let max_attempts = 5;
     let mut last_err = None;
     for attempt in 1..=max_attempts {
