@@ -498,7 +498,7 @@ fn cmd_start(name: Option<String>) -> Result<()> {
     println!("  {}  {}", "Session:".bold(), session.green().bold());
     println!();
     println!("  Share the token so others can join:");
-    println!("    {} {}", "multiplayer join".cyan(), token.cyan());
+    println!("    {} \"{}\"", "multiplayer join".cyan(), token.cyan());
     println!();
     println!("  To enter your session:");
     println!("    {}", "multiplayer join".cyan());
