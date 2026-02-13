@@ -43,12 +43,6 @@ multiplayer start
 
 This generates a random session name (e.g. `hungry-otter`), creates a tmux session, prints a join token, then exits.
 
-To choose a name:
-
-```bash
-multiplayer start --name my-feature
-```
-
 ### Join a session
 
 As the host (attach to your local session):
