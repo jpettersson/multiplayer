@@ -864,13 +864,37 @@ fn cmd_join_gcp(token_str: &str) -> Result<()> {
         token.relay_port,
     )?;
 
-    // Wait for tunnel to establish
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // Wait for the local forward port to become reachable
+    let timeout = std::time::Duration::from_secs(30);
+    let poll_interval = std::time::Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    let mut connected = false;
 
-    // Check tunnel is still alive
-    if let Some(_status) = tunnel.try_wait()? {
+    while start.elapsed() < timeout {
+        // Check if tunnel process died
+        if let Some(_status) = tunnel.try_wait()? {
+            return Err(err(
+                "Local forward tunnel exited unexpectedly. Check that the GCP VM is reachable and you have access.",
+            ));
+        }
+        // Try connecting to the forwarded port
+        if std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], local_port)),
+            std::time::Duration::from_millis(200),
+        )
+        .is_ok()
+        {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(poll_interval);
+    }
+
+    if !connected {
+        let _ = tunnel.kill();
+        let _ = tunnel.wait();
         return Err(err(
-            "Local forward tunnel failed to start. Check that the GCP VM is reachable and you have access.",
+            "Timed out waiting for local forward tunnel. Check that the GCP VM is reachable and the host session is running.",
         ));
     }
 
