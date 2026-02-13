@@ -1,0 +1,17 @@
+[Unit]
+Description=Multiplayer Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/multiplayer-server
+EnvironmentFile=/etc/multiplayer-server.env
+WorkingDirectory=/var/lib/multiplayer
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
