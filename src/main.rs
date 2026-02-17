@@ -1392,6 +1392,8 @@ fn join_with_key(user: &str, session: &str, host: &str, ssh_port: u16, private_k
 
     let status = Command::new("ssh")
         .env("TERM", "xterm-256color")
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_CTYPE", "UTF-8")
         .args([
             "-i",
             key_path.to_str().unwrap(),
