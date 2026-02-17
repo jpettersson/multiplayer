@@ -79,7 +79,7 @@ Share sessions over the internet by relaying traffic through any SSH-accessible 
 
 ### Config setup
 
-Create `~/.multiplayer/config.yml` with your relay host entries:
+Create `~/.config/multiplayer/config.yml` with your relay host entries:
 
 ```yaml
 hosts:
@@ -91,12 +91,12 @@ hosts:
 
 - **host** — hostname or IP of the relay server
 - **user** — SSH user on the relay server
-- **key** — path to the SSH private key for the relay server. Relative paths resolve to `~/.multiplayer/` (e.g. `relay_key` becomes `~/.multiplayer/relay_key`). Absolute paths are used as-is.
+- **key** — path to the SSH private key for the relay server. Relative paths resolve to `~/.config/multiplayer/` (e.g. `relay_key` becomes `~/.config/multiplayer/relay_key`). Absolute paths are used as-is.
 
 The key file must have `0600` permissions:
 
 ```bash
-chmod 600 ~/.multiplayer/relay_key
+chmod 600 ~/.config/multiplayer/relay_key
 ```
 
 You can define multiple entries (e.g. `default`, `work`, `eu-relay`) and select one at start time.
@@ -123,7 +123,7 @@ Copy the `mp-ssh://` token from the host and run:
 multiplayer join "mp-ssh://user@relay.example.com:2291/eager-falcon?relay_user=relay_user#AAAC3Nza..."
 ```
 
-The joiner's machine looks up the relay host in their own `~/.multiplayer/config.yml` to find the SSH key for the relay, then opens a local forward through the relay and connects to the host's tmux session.
+The joiner's machine looks up the relay host in their own `~/.config/multiplayer/config.yml` to find the SSH key for the relay, then opens a local forward through the relay and connects to the host's tmux session.
 
 ### Stop an SSH relay session
 
@@ -195,9 +195,9 @@ cargo run -- stop
 ### SSH relay mode
 
 1. Steps 1–2 are the same (keypair + authorized_keys)
-2. The host runs `ssh -R <port>:localhost:22` to establish a **reverse tunnel** from the relay server back to the host's SSH port, using the key from `~/.multiplayer/config.yml` (the relay port is randomly chosen from 2222–2322 so multiple sessions can share one server)
+2. The host runs `ssh -R <port>:localhost:22` to establish a **reverse tunnel** from the relay server back to the host's SSH port, using the key from `~/.config/multiplayer/config.yml` (the relay port is randomly chosen from 10000–60000 so multiple sessions can share one server)
 3. A `mp-ssh://` token is printed containing the relay host, relay port, session name, relay user, and the base64-encoded session private key
-4. The joiner looks up the relay host in their own `~/.multiplayer/config.yml` to find the SSH key for the relay, then runs `ssh -L <local-port>:localhost:<port>` to establish a **local forward** through the same relay server
+4. The joiner looks up the relay host in their own `~/.config/multiplayer/config.yml` to find the SSH key for the relay, then runs `ssh -L <local-port>:localhost:<port>` to establish a **local forward** through the same relay server
 5. The joiner SSHs to `localhost:<local-port>`, which travels through the relay server's port and into the host's SSH server — the ForceCommand attaches to the tmux session
 6. `stop` cleans up everything including killing the reverse tunnel process
 

@@ -50,7 +50,7 @@ Examples:
   multiplayer start --ssh myrelay    SSH relay using \"myrelay\" config"
     )]
     Start {
-        /// Relay through an SSH host (config name from ~/.multiplayer/config.yml, defaults to "default")
+        /// Relay through an SSH host (config name from ~/.config/multiplayer/config.yml, defaults to "default")
         #[arg(long = "ssh", num_args = 0..=1, default_missing_value = "default")]
         ssh_relay: Option<String>,
     },
@@ -97,7 +97,7 @@ fn err(msg: impl Into<String>) -> Error {
 }
 
 // ---------------------------------------------------------------------------
-// Config file (~/.multiplayer/config.yml)
+// Config file (~/.config/multiplayer/config.yml)
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -113,8 +113,11 @@ struct HostConfig {
 }
 
 fn multiplayer_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("MULTIPLAYER_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".multiplayer")
+    PathBuf::from(home).join(".config").join("multiplayer")
 }
 
 fn load_config() -> Result<Config> {
@@ -146,7 +149,7 @@ fn find_config_by_host<'a>(config: &'a Config, relay_host: &str) -> Result<&'a H
         .find(|h| h.host == relay_host)
         .ok_or_else(|| {
             err(format!(
-                "No config entry found matching relay host '{relay_host}' in ~/.multiplayer/config.yml"
+                "No config entry found matching relay host '{relay_host}' in ~/.config/multiplayer/config.yml"
             ))
         })
 }
@@ -154,7 +157,7 @@ fn find_config_by_host<'a>(config: &'a Config, relay_host: &str) -> Result<&'a H
 fn validate_relay_key(path: &PathBuf) -> Result<()> {
     if !path.exists() {
         return Err(err(format!(
-            "Relay key not found: {}. Place the key file there or update ~/.multiplayer/config.yml.",
+            "Relay key not found: {}. Place the key file there or update ~/.config/multiplayer/config.yml.",
             path.display()
         )));
     }
@@ -795,7 +798,7 @@ fn cmd_start_ssh(config_name: String) -> Result<()> {
     let host_config = config.hosts.get(&config_name).ok_or_else(|| {
         let available: Vec<&String> = config.hosts.keys().collect();
         err(format!(
-            "Unknown SSH relay '{}'. Available hosts in ~/.multiplayer/config.yml: {}",
+            "Unknown SSH relay '{}'. Available hosts in ~/.config/multiplayer/config.yml: {}",
             config_name,
             if available.is_empty() {
                 "(none)".to_string()
@@ -828,19 +831,44 @@ fn cmd_start_ssh(config_name: String) -> Result<()> {
     create_tmux_session(&session)?;
 
     // 4. Establish reverse tunnel to SSH relay
-    let relay_port = rand::thread_rng().gen_range(2222..=2322);
     println!(
         "  {} to relay '{}'...",
         "Establishing tunnel".bold(),
         config_name
     );
-    establish_ssh_reverse_tunnel(
-        &host_config.user,
-        &host_config.host,
-        &relay_key_path,
-        relay_port,
-        &session,
-    )?;
+    let max_tunnel_attempts = 5;
+    let mut relay_port = 0u16;
+    let mut last_tunnel_err = None;
+    for attempt in 1..=max_tunnel_attempts {
+        relay_port = rand::thread_rng().gen_range(10000..=60000);
+        match establish_ssh_reverse_tunnel(
+            &host_config.user,
+            &host_config.host,
+            &relay_key_path,
+            relay_port,
+            &session,
+        ) {
+            Ok(()) => {
+                last_tunnel_err = None;
+                break;
+            }
+            Err(e) => {
+                if attempt < max_tunnel_attempts {
+                    eprintln!(
+                        "  {} (attempt {}/{})",
+                        "Relay port conflict, retrying...".yellow(),
+                        attempt,
+                        max_tunnel_attempts
+                    );
+                }
+                last_tunnel_err = Some(e);
+            }
+        }
+    }
+    if let Some(e) = last_tunnel_err {
+        cleanup_session(&session);
+        return Err(e);
+    }
 
     // 5. Read private key for the token
     let private_key = fs::read_to_string(tmp_key_path(&session))?;
