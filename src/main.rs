@@ -175,28 +175,29 @@ fn validate_relay_key(path: &PathBuf) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Session name generator (adjective-animal)
+// Session name generator (space-themed)
 // ---------------------------------------------------------------------------
 
-const ADJECTIVES: &[&str] = &[
-    "brave", "calm", "daring", "eager", "fancy", "gentle", "happy", "jolly",
-    "keen", "lively", "merry", "noble", "proud", "quick", "rapid", "sharp",
-    "swift", "tall", "vivid", "witty", "bold", "cool", "crisp", "fresh",
-    "grand", "hungry", "icy", "lucky", "mighty", "neat",
+const SPACE_ADJECTIVES: &[&str] = &[
+    "bright", "distant", "ancient", "frozen", "silent", "fading", "blazing", "drifting",
+    "hidden", "hollow", "cosmic", "stellar", "orbital", "binary", "astral", "radiant",
+    "dim", "vast", "deep", "outer", "intercepted", "dim", "glowing", "iron",
+    "molten", "charged", "dense", "rapid", "volatile", "lone",
 ];
 
-const ANIMALS: &[&str] = &[
-    "otter", "falcon", "panda", "wolf", "tiger", "hawk", "dolphin", "fox",
-    "eagle", "bear", "lynx", "raven", "cobra", "crane", "bison", "shark",
-    "whale", "koala", "gecko", "heron", "moose", "viper", "finch", "badger",
-    "trout", "robin", "squid", "lemur", "newt", "stork",
+const SPACE_OBJECTS: &[&str] = &[
+    "pulsar", "nebula", "quasar", "comet", "nova", "vortex", "orbit", "photon",
+    "flare", "void", "prism", "zenith", "aurora", "corona", "eclipse", "meteor",
+    "plasma", "vertex", "signal", "singularity", "sector", "remnant", "cluster", "horizon",
+    "transit", "apogee", "parsec", "vector", "proton", "helix",
 ];
 
 fn generate_session_name() -> String {
     let mut rng = rand::thread_rng();
-    let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
-    let animal = ANIMALS[rng.gen_range(0..ANIMALS.len())];
-    format!("{adj}-{animal}")
+    let adj = SPACE_ADJECTIVES[rng.gen_range(0..SPACE_ADJECTIVES.len())];
+    let obj = SPACE_OBJECTS[rng.gen_range(0..SPACE_OBJECTS.len())];
+    let num: u32 = rng.gen_range(0..100);
+    format!("{adj}-{obj}-{num:02}")
 }
 
 // ---------------------------------------------------------------------------
