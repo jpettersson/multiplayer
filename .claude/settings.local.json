@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(git -C /Users/jp/code/github.com/jpettersson/multiplayer diff HEAD~5..HEAD --stat)",
+      "Bash(git -C /Users/jp/code/github.com/jpettersson/multiplayer show b27e35b --stat)"
     ]
   }
 }
