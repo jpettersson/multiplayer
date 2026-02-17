@@ -15,7 +15,25 @@ use std::process::{Child, Command, Stdio};
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "multiplayer", about = "Instant shared terminal sessions on LAN")]
+#[command(
+    name = "multiplayer",
+    about = "Instant shared terminal sessions",
+    after_help = "\
+Examples:
+  LAN session (peers on the same network):
+    multiplayer start                  Start a session
+    multiplayer join                   Attach to a local session
+    multiplayer join \"mp://...\"        Join a LAN session via token
+
+  SSH relay session (peers anywhere, via a relay host):
+    multiplayer start --ssh            Start using the \"default\" relay
+    multiplayer start --ssh myrelay    Start using the \"myrelay\" relay
+    multiplayer join \"mp-ssh://...\"    Join a relay session via token
+
+  Session management:
+    multiplayer stop                   Stop the active session
+    multiplayer status                 Show session info"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -24,26 +42,28 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Start a new multiplayer session
+    #[command(
+        after_help = "\
+Examples:
+  multiplayer start                  LAN session
+  multiplayer start --ssh            SSH relay using \"default\" config
+  multiplayer start --ssh myrelay    SSH relay using \"myrelay\" config"
+    )]
     Start {
-        /// Session name (default: random adjective-animal)
-        #[arg(long)]
-        name: Option<String>,
-        /// Relay through a GCP VM (provide the VM instance name)
-        #[arg(long = "gcp")]
-        gcp_vm: Option<String>,
-        /// GCP zone (defaults to gcloud config value)
-        #[arg(long)]
-        zone: Option<String>,
-        /// GCP project (defaults to gcloud config value)
-        #[arg(long)]
-        project: Option<String>,
         /// Relay through an SSH host (config name from ~/.multiplayer/config.yml, defaults to "default")
         #[arg(long = "ssh", num_args = 0..=1, default_missing_value = "default")]
         ssh_relay: Option<String>,
     },
     /// Join a session (local attach if no token, remote SSH if token given)
+    #[command(
+        after_help = "\
+Examples:
+  multiplayer join                   Attach to a local session
+  multiplayer join \"mp://...\"        Join a LAN session via token
+  multiplayer join \"mp-ssh://...\"    Join an SSH relay session via token"
+    )]
     Join {
-        /// mp:// token (omit to attach to local session)
+        /// mp:// or mp-ssh:// token (omit to attach to local session)
         target: Option<String>,
     },
     /// Stop the current session and clean up
@@ -174,16 +194,6 @@ fn generate_session_name() -> String {
     let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
     let animal = ANIMALS[rng.gen_range(0..ANIMALS.len())];
     format!("{adj}-{animal}")
-}
-
-fn validate_session_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        return Err(err("Session name cannot be empty"));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return Err(err("Session name must contain only alphanumeric characters and hyphens"));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -462,107 +472,6 @@ fn decode_token(token: &str) -> Result<Token> {
 }
 
 // ---------------------------------------------------------------------------
-// GCP token encoding / decoding
-// ---------------------------------------------------------------------------
-
-struct GcpToken {
-    user: String,
-    vm: String,
-    relay_port: u16,
-    session: String,
-    zone: Option<String>,
-    project: Option<String>,
-    private_key: String,
-}
-
-fn encode_gcp_token(
-    user: &str,
-    vm: &str,
-    relay_port: u16,
-    session: &str,
-    zone: Option<&str>,
-    project: Option<&str>,
-    private_key: &str,
-) -> String {
-    let encoded_key = URL_SAFE_NO_PAD.encode(private_key.as_bytes());
-    let mut query_parts = Vec::new();
-    if let Some(z) = zone {
-        query_parts.push(format!("zone={z}"));
-    }
-    if let Some(p) = project {
-        query_parts.push(format!("project={p}"));
-    }
-    let query = if query_parts.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", query_parts.join("&"))
-    };
-    format!("mp-gcp://{user}@{vm}:{relay_port}/{session}{query}#{encoded_key}")
-}
-
-fn decode_gcp_token(token: &str) -> Result<GcpToken> {
-    let rest = token
-        .strip_prefix("mp-gcp://")
-        .ok_or_else(|| err("Invalid GCP token: must start with mp-gcp://"))?;
-
-    let (addr_session_query, encoded_key) = rest
-        .split_once('#')
-        .ok_or_else(|| err("Invalid GCP token: missing # separator"))?;
-
-    let (addr_session, query) = match addr_session_query.split_once('?') {
-        Some((a, q)) => (a, Some(q)),
-        None => (addr_session_query, None),
-    };
-
-    let (addr, session) = addr_session
-        .split_once('/')
-        .ok_or_else(|| err("Invalid GCP token: missing / separator"))?;
-
-    let (user_vm, port_str) = addr
-        .rsplit_once(':')
-        .ok_or_else(|| err("Invalid GCP token: missing :port"))?;
-
-    let relay_port: u16 = port_str
-        .parse()
-        .map_err(|_| err("Invalid GCP token: bad port number"))?;
-
-    let (user, vm) = user_vm
-        .split_once('@')
-        .ok_or_else(|| err("Invalid GCP token: missing user@vm"))?;
-
-    let mut zone = None;
-    let mut project = None;
-    if let Some(q) = query {
-        for pair in q.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                match k {
-                    "zone" => zone = Some(v.to_string()),
-                    "project" => project = Some(v.to_string()),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    let key_bytes = URL_SAFE_NO_PAD
-        .decode(encoded_key)
-        .map_err(|_| err("Invalid GCP token: bad base64 key"))?;
-
-    let private_key =
-        String::from_utf8(key_bytes).map_err(|_| err("Invalid GCP token: key is not valid UTF-8"))?;
-
-    Ok(GcpToken {
-        user: user.to_string(),
-        vm: vm.to_string(),
-        relay_port,
-        session: session.to_string(),
-        zone,
-        project,
-        private_key,
-    })
-}
-
-// ---------------------------------------------------------------------------
 // SSH relay token encoding / decoding
 // ---------------------------------------------------------------------------
 
@@ -647,113 +556,11 @@ fn decode_ssh_token(token: &str) -> Result<SshToken> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// GCP helpers
-// ---------------------------------------------------------------------------
-
-fn gcloud_config_value(key: &str) -> Option<String> {
-    let output = Command::new("gcloud")
-        .args(["config", "get-value", key])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if val.is_empty() || val == "(unset)" {
-        None
-    } else {
-        Some(val)
-    }
-}
-
-fn establish_reverse_tunnel(
-    vm: &str,
-    zone: Option<&str>,
-    project: Option<&str>,
-    relay_port: u16,
-    session: &str,
-) -> Result<()> {
-    let mut cmd = Command::new("gcloud");
-    cmd.arg("compute").arg("ssh");
-    if let Some(z) = zone {
-        cmd.arg(format!("--zone={z}"));
-    }
-    if let Some(p) = project {
-        cmd.arg(format!("--project={p}"));
-    }
-    cmd.arg(vm);
-    cmd.arg("--");
-    cmd.arg("-R").arg(format!("{relay_port}:localhost:22"));
-    cmd.arg("-N");
-    cmd.arg("-o").arg("ExitOnForwardFailure=yes");
-    cmd.arg("-o").arg("ServerAliveInterval=30");
-
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::piped());
-
-    let child = cmd.spawn().map_err(|e| err(format!("Failed to start gcloud: {e}")))?;
-    let pid = child.id();
-
-    fs::write(tmp_tunnel_pid_path(session), pid.to_string())?;
-
-    // Wait for tunnel to establish
-    std::thread::sleep(std::time::Duration::from_secs(3));
-
-    // Verify process is still alive
-    let alive = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if !alive {
-        let _ = fs::remove_file(tmp_tunnel_pid_path(session));
-        return Err(err(
-            "Reverse tunnel failed to start. Check that the GCP VM is reachable and you have access.",
-        ));
-    }
-
-    Ok(())
-}
-
 fn find_free_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     drop(listener);
     Ok(port)
-}
-
-fn establish_local_forward(
-    vm: &str,
-    zone: Option<&str>,
-    project: Option<&str>,
-    local_port: u16,
-    relay_port: u16,
-) -> Result<Child> {
-    let mut cmd = Command::new("gcloud");
-    cmd.arg("compute").arg("ssh");
-    if let Some(z) = zone {
-        cmd.arg(format!("--zone={z}"));
-    }
-    if let Some(p) = project {
-        cmd.arg(format!("--project={p}"));
-    }
-    cmd.arg(vm);
-    cmd.arg("--");
-    cmd.arg("-L").arg(format!("{local_port}:localhost:{relay_port}"));
-    cmd.arg("-N");
-    cmd.arg("-o").arg("ServerAliveInterval=30");
-
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::piped());
-
-    let child = cmd.spawn().map_err(|e| err(format!("Failed to start gcloud: {e}")))?;
-    Ok(child)
 }
 
 fn kill_tunnel_process(session: &str) {
@@ -934,19 +741,13 @@ fn cleanup_stale_sessions() {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn cmd_start(name: Option<String>) -> Result<()> {
+fn cmd_start() -> Result<()> {
     check_dependencies(&["tmux", "ssh-keygen"])?;
 
     // Clean up any stale sessions left behind by crashes or kill -9
     cleanup_stale_sessions();
 
-    let session = match name {
-        Some(n) => {
-            validate_session_name(&n)?;
-            n
-        }
-        None => generate_session_name(),
-    };
+    let session = generate_session_name();
 
     // Check if session is genuinely still active
     if tmp_session_info_path(&session).exists() {
@@ -986,84 +787,7 @@ fn cmd_start(name: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_start_gcp(
-    name: Option<String>,
-    vm: String,
-    zone: Option<String>,
-    project: Option<String>,
-) -> Result<()> {
-    check_dependencies(&["tmux", "ssh-keygen", "gcloud"])?;
-
-    cleanup_stale_sessions();
-
-    let session = match name {
-        Some(n) => {
-            validate_session_name(&n)?;
-            n
-        }
-        None => generate_session_name(),
-    };
-
-    if tmp_session_info_path(&session).exists() {
-        return Err(err(format!(
-            "Session '{session}' already exists. Run `multiplayer stop {session}` first."
-        )));
-    }
-
-    // Resolve zone/project: flags > gcloud config defaults
-    let zone = zone.or_else(|| gcloud_config_value("compute/zone"));
-    let project = project.or_else(|| gcloud_config_value("core/project"));
-
-    // 1. Generate SSH keypair
-    generate_ssh_keypair(&session)?;
-
-    // 2. Install public key in authorized_keys
-    install_authorized_key(&session)?;
-
-    // 3. Create tmux session
-    create_tmux_session(&session)?;
-
-    // 4. Establish reverse tunnel to GCP relay VM
-    let relay_port = rand::thread_rng().gen_range(2222..=2322);
-    println!(
-        "  {} to GCP VM '{}'...",
-        "Establishing tunnel".bold(),
-        vm
-    );
-    establish_reverse_tunnel(&vm, zone.as_deref(), project.as_deref(), relay_port, &session)?;
-
-    // 5. Read private key for the token
-    let private_key = fs::read_to_string(tmp_key_path(&session))?;
-
-    // 6. Build GCP token
-    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-    let token = encode_gcp_token(
-        &user,
-        &vm,
-        relay_port,
-        &session,
-        zone.as_deref(),
-        project.as_deref(),
-        &private_key,
-    );
-
-    // 7. Save session info
-    write_session_info(&session, &format!("gcp:{vm}"));
-
-    println!();
-    println!("  {}  {}", "Session:".bold(), session.green().bold());
-    println!("  {}    {} (via GCP relay)", "Relay:".bold(), vm);
-    println!();
-    println!("  Share the token so others can join:");
-    println!("    {} \"{}\"", "multiplayer join".cyan(), token.cyan());
-    println!();
-    println!("  To enter your session:");
-    println!("    {}", "multiplayer join".cyan());
-
-    Ok(())
-}
-
-fn cmd_start_ssh(name: Option<String>, config_name: String) -> Result<()> {
+fn cmd_start_ssh(config_name: String) -> Result<()> {
     check_dependencies(&["tmux", "ssh-keygen", "ssh"])?;
 
     // Load config and look up the relay entry
@@ -1086,13 +810,7 @@ fn cmd_start_ssh(name: Option<String>, config_name: String) -> Result<()> {
 
     cleanup_stale_sessions();
 
-    let session = match name {
-        Some(n) => {
-            validate_session_name(&n)?;
-            n
-        }
-        None => generate_session_name(),
-    };
+    let session = generate_session_name();
 
     if tmp_session_info_path(&session).exists() {
         return Err(err(format!(
@@ -1167,116 +885,18 @@ fn cmd_join(target: Option<String>) -> Result<()> {
             println!("  {} {}", "Attaching to session:".bold(), session.green().bold());
             attach_tmux_session(&session)
         }
-        Some(t) if t.starts_with("mp-gcp://") => cmd_join_gcp(&t),
         Some(t) if t.starts_with("mp-ssh://") => cmd_join_ssh(&t),
         Some(t) => {
             check_dependencies(&["ssh"])?;
             if !t.starts_with("mp://") {
                 return Err(err(
-                    "Expected an mp://, mp-gcp://, or mp-ssh:// token. Get one from the session host and run: multiplayer join <token>"
+                    "Expected an mp:// or mp-ssh:// token. Get one from the session host and run: multiplayer join <token>"
                 ));
             }
             let token = decode_token(&t)?;
             join_with_key(&token.user, &token.session, &token.host, token.port, &token.private_key)
         }
     }
-}
-
-fn cmd_join_gcp(token_str: &str) -> Result<()> {
-    check_dependencies(&["ssh", "gcloud"])?;
-
-    let token = decode_gcp_token(token_str)?;
-
-    let local_port = find_free_port()?;
-
-    println!(
-        "  {} to GCP VM '{}'...",
-        "Establishing tunnel".bold(),
-        token.vm
-    );
-    let mut tunnel = establish_local_forward(
-        &token.vm,
-        token.zone.as_deref(),
-        token.project.as_deref(),
-        local_port,
-        token.relay_port,
-    )?;
-
-    // Wait for the local forward port to become reachable
-    let timeout = std::time::Duration::from_secs(30);
-    let poll_interval = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    let mut connected = false;
-
-    while start.elapsed() < timeout {
-        // Check if tunnel process died
-        if let Some(_status) = tunnel.try_wait()? {
-            return Err(err(
-                "Local forward tunnel exited unexpectedly. Check that the GCP VM is reachable and you have access.",
-            ));
-        }
-        // Try connecting to the forwarded port
-        if std::net::TcpStream::connect_timeout(
-            &std::net::SocketAddr::from(([127, 0, 0, 1], local_port)),
-            std::time::Duration::from_millis(200),
-        )
-        .is_ok()
-        {
-            connected = true;
-            break;
-        }
-        std::thread::sleep(poll_interval);
-    }
-
-    if !connected {
-        let _ = tunnel.kill();
-        let _ = tunnel.wait();
-        return Err(err(
-            "Timed out waiting for local forward tunnel. Check that the GCP VM is reachable and the host session is running.",
-        ));
-    }
-
-    // Retry SSH connection — the local forward port may be listening before the
-    // full tunnel chain (participant → relay → host:22) is ready.
-    let max_attempts = 5;
-    let mut last_err = None;
-    for attempt in 1..=max_attempts {
-        // Check tunnel is still alive before each attempt
-        if let Some(_status) = tunnel.try_wait()? {
-            let _ = tunnel.kill();
-            let _ = tunnel.wait();
-            return Err(err(
-                "Local forward tunnel exited unexpectedly.",
-            ));
-        }
-
-        match join_with_key(
-            &token.user,
-            &token.session,
-            "127.0.0.1",
-            local_port,
-            &token.private_key,
-        ) {
-            Ok(()) => {
-                let _ = tunnel.kill();
-                let _ = tunnel.wait();
-                return Ok(());
-            }
-            Err(e) => {
-                if attempt < max_attempts {
-                    println!("  {} (attempt {}/{})", "Retrying connection...".bold(), attempt, max_attempts);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                }
-                last_err = Some(e);
-            }
-        }
-    }
-
-    // Kill the local forward tunnel
-    let _ = tunnel.kill();
-    let _ = tunnel.wait();
-
-    Err(last_err.unwrap_or_else(|| err("SSH connection failed after retries")))
 }
 
 fn cmd_join_ssh(token_str: &str) -> Result<()> {
@@ -1472,25 +1092,11 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Cmd::Start {
-            name,
-            gcp_vm,
-            zone,
-            project,
-            ssh_relay,
-        } => {
-            if gcp_vm.is_some() && ssh_relay.is_some() {
-                Err(err("--gcp and --ssh are mutually exclusive"))
-            } else if ssh_relay.is_some() && (zone.is_some() || project.is_some()) {
-                Err(err("--zone and --project cannot be used with --ssh"))
-            } else if gcp_vm.is_none() && ssh_relay.is_none() && (zone.is_some() || project.is_some()) {
-                Err(err("--zone and --project require --gcp"))
-            } else if let Some(relay) = ssh_relay {
-                cmd_start_ssh(name, relay)
-            } else if let Some(vm) = gcp_vm {
-                cmd_start_gcp(name, vm, zone, project)
+        Cmd::Start { ssh_relay } => {
+            if let Some(relay) = ssh_relay {
+                cmd_start_ssh(relay)
             } else {
-                cmd_start(name)
+                cmd_start()
             }
         }
         Cmd::Join { target } => cmd_join(target),

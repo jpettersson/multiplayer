@@ -2,7 +2,7 @@
 
 Huddle together around Claude code or any other terminal program and build great things together!
 
-Multiplayer enables instant shared terminal sessions on LAN — or over the internet using a GCP VM as a relay. One command to share your tmux session, one command to join from another machine.
+Multiplayer enables instant shared terminal sessions on LAN — or over the internet using any SSH-accessible server as a relay. One command to share your tmux session, one command to join from another machine.
 
 ## Prerequisites
 
@@ -11,7 +11,6 @@ System dependencies (must be installed on both host and joiner machines):
 - `tmux`
 - `ssh` / `sshd` (sshd must be running on the host machine)
 - `ssh-keygen`
-- `gcloud` CLI (only for GCP relay mode — [install guide](https://cloud.google.com/sdk/docs/install))
 
 On Arch Linux:
 
@@ -64,11 +63,7 @@ multiplayer join mp://192.168.1.42:22/hungry-otter#AAAC3NzaC1lZDI1NTE5...
 multiplayer status
 ```
 
-Shows session name, host IP, and participant count. Optionally pass a session name:
-
-```bash
-multiplayer status my-feature
-```
+Shows session name, host IP, and participant count.
 
 ### Stop a session
 
@@ -76,49 +71,61 @@ multiplayer status my-feature
 multiplayer stop
 ```
 
-Optionally pass a session name:
-
-```bash
-multiplayer stop my-feature
-```
-
 This cleans up everything: tmux session, temp SSH keys, and the authorized_keys entry.
 
-## GCP Relay Mode
+## SSH Relay Mode
 
-Share sessions over the internet by relaying traffic through a GCP VM.
+Share sessions over the internet by relaying traffic through any SSH-accessible server.
 
-### GCP Prerequisites
+### Config setup
 
-- A GCP VM instance with [OS Login](https://cloud.google.com/compute/docs/instances/managing-instance-access) enabled
-- `gcloud` CLI installed and authenticated on both host and participant machines
-- Both users need SSH access to the relay VM (via `gcloud compute ssh`)
+Create `~/.multiplayer/config.yml` with your relay host entries:
 
-### Start a session over GCP
-
-```bash
-multiplayer start --gcp <vm-instance-name>
+```yaml
+hosts:
+  default:
+    host: relay.example.com
+    user: relay_user
+    key: relay_key
 ```
 
-Optional flags:
+- **host** — hostname or IP of the relay server
+- **user** — SSH user on the relay server
+- **key** — path to the SSH private key for the relay server. Relative paths resolve to `~/.multiplayer/` (e.g. `relay_key` becomes `~/.multiplayer/relay_key`). Absolute paths are used as-is.
 
-- `--zone <zone>` — GCP zone (defaults to your `gcloud` config value)
-- `--project <project>` — GCP project (defaults to your `gcloud` config value)
-- `--name <session-name>` — custom session name
-
-This establishes a reverse SSH tunnel from the GCP VM back to your machine, then prints a `mp-gcp://` join token.
-
-### Join a GCP session
-
-Copy the `mp-gcp://` token from the host and run:
+The key file must have `0600` permissions:
 
 ```bash
-multiplayer join "mp-gcp://user@relay-vm:2291/eager-falcon?zone=us-central1-a&project=my-project#AAAC3Nza..."
+chmod 600 ~/.multiplayer/relay_key
 ```
 
-This opens a local forward through the same GCP VM and connects to the host's tmux session.
+You can define multiple entries (e.g. `default`, `work`, `eu-relay`) and select one at start time.
 
-### Stop a GCP session
+### Start a session over SSH relay
+
+```bash
+multiplayer start --ssh
+```
+
+This uses the `default` entry from your config. To use a different entry:
+
+```bash
+multiplayer start --ssh work
+```
+
+This establishes a reverse SSH tunnel from the relay server back to your machine, then prints a `mp-ssh://` join token.
+
+### Join an SSH relay session
+
+Copy the `mp-ssh://` token from the host and run:
+
+```bash
+multiplayer join "mp-ssh://user@relay.example.com:2291/eager-falcon?relay_user=relay_user#AAAC3Nza..."
+```
+
+The joiner's machine looks up the relay host in their own `~/.multiplayer/config.yml` to find the SSH key for the relay, then opens a local forward through the relay and connects to the host's tmux session.
+
+### Stop an SSH relay session
 
 ```bash
 multiplayer stop
@@ -150,7 +157,7 @@ You can test the full flow locally without a second machine.
 **Terminal 1 — start a session:**
 
 ```bash
-cargo run -- start --name test-session
+cargo run -- start
 # Prints token and returns to shell
 
 cargo run -- join
@@ -160,7 +167,7 @@ cargo run -- join
 **Terminal 2 — join using the token:**
 
 ```bash
-cargo run -- join mp://127.0.0.1:22/test-session#<key-from-terminal-1>
+cargo run -- join "mp://127.0.0.1:22/brave-otter#<key-from-terminal-1>"
 ```
 
 Copy the full `mp://...` token from terminal 1. You should land in the same tmux session.
@@ -172,7 +179,7 @@ Copy the full `mp://...` token from terminal 1. You should land in the same tmux
 cargo run -- status
 
 # Stop the session
-cargo run -- stop test-session
+cargo run -- stop
 ```
 
 ## How it works
@@ -185,13 +192,13 @@ cargo run -- stop test-session
 4. `join` decodes everything from the token, writes the key to a temp file, then SSHs in — the ForceCommand automatically attaches to the tmux session
 5. `stop` cleans up everything: kills tmux, removes the authorized_keys entry, and deletes temp key files
 
-### GCP relay mode
+### SSH relay mode
 
 1. Steps 1–2 are the same (keypair + authorized_keys)
-2. The host runs `gcloud compute ssh` to establish a **reverse tunnel** (`-R <port>:localhost:22`) from the GCP VM back to the host's SSH port (the relay port is randomly chosen from 2222–2322 so multiple sessions can share one VM)
-3. A `mp-gcp://` token is printed containing the VM name, relay port, session name, zone/project, and the base64-encoded private key
-4. The joiner runs `gcloud compute ssh` to establish a **local forward** (`-L <local-port>:localhost:<port>`) through the same GCP VM
-5. The joiner SSHs to `localhost:<local-port>`, which travels through the GCP VM's relay port and into the host's SSH server — the ForceCommand attaches to the tmux session
+2. The host runs `ssh -R <port>:localhost:22` to establish a **reverse tunnel** from the relay server back to the host's SSH port, using the key from `~/.multiplayer/config.yml` (the relay port is randomly chosen from 2222–2322 so multiple sessions can share one server)
+3. A `mp-ssh://` token is printed containing the relay host, relay port, session name, relay user, and the base64-encoded session private key
+4. The joiner looks up the relay host in their own `~/.multiplayer/config.yml` to find the SSH key for the relay, then runs `ssh -L <local-port>:localhost:<port>` to establish a **local forward** through the same relay server
+5. The joiner SSHs to `localhost:<local-port>`, which travels through the relay server's port and into the host's SSH server — the ForceCommand attaches to the tmux session
 6. `stop` cleans up everything including killing the reverse tunnel process
 
 ## Temporary files
@@ -203,6 +210,6 @@ All session state lives in `/tmp`:
 | `/tmp/multiplayer-<name>-key` | Temporary SSH private key |
 | `/tmp/multiplayer-<name>-key.pub` | Temporary SSH public key |
 | `/tmp/multiplayer-<name>-info` | Session metadata (name, host IP) |
-| `/tmp/multiplayer-<name>-tunnel-pid` | Reverse tunnel process PID (GCP mode only) |
+| `/tmp/multiplayer-<name>-tunnel-pid` | Reverse tunnel process PID (relay mode only) |
 
 All are cleaned up on `stop`.
