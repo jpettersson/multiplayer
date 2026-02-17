@@ -2,3 +2,4 @@ target
 multiplayer-repo
 dist
 .contain.yaml
+.DS_Store
